@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth overflow-x-hidden dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Astro Dash | NRF26 Arcade</title>
+    
+    <link rel="icon" type="image/png" href="image/logo/logo.png">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: {} }
+        }
+    </script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
+    
+    <style>
+        /* Mobile keyboard fix */
+        body { background-color: #040814; color: white; font-family: 'Rajdhani', sans-serif; overflow-x: hidden; }
+        
+        /* CRT Scanline Effect over the game */
+        .scanlines {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.1));
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #gameCanvas {
+            background: radial-gradient(circle at center, #0a0b1a 0%, #02040a 100%);
+            image-rendering: pixelated;
+            touch-action: none; /* Prevent swiping the canvas */
+        }
+
+        /* Dynamic Game Container: Strictly 4:3 and mathematically impossible to overflow height */
+        .game-container {
+            width: 100%;
+            /* Strict 4:3 aspect ratio to match internal 800x600 resolution */
+            aspect-ratio: 4 / 3 !important;
+            /* Max width is bounded by 800px, OR by available screen height. 
+               We subtract 140px to safely account for the header, padding, and browser borders. */
+            max-width: min(800px, calc((100vh - 140px) * 1.3333)) !important;
+            margin: 0 auto;
+        }
+
+        /* Mobile Controls */
+        .arcade-btn {
+            background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+            color: white; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            user-select: none; 
+            touch-action: none; /* Prevent double-tap zooming */
+        }
+        .arcade-btn:active { background: rgba(239, 59, 58, 0.4); border-color: #ef3b3a; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <header class="w-full bg-[#040814]/90 backdrop-blur border-b border-slate-800 p-4 flex justify-between items-center z-20">
+        <a href="../mini-games.html" class="text-slate-400 hover:text-white transition-colors flex items-center gap-2 font-bold uppercase tracking-widest text-xs">
+            <i class="fas fa-arrow-left"></i> Exit Arcade
+        </a>
+        <div class="text-center font-['Orbitron'] font-black text-lg tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-purple-500 to-red-500">
+            NRF26 ASTRO DASH
+        </div>
+        <div class="w-20"></div> 
+    </header>
+
+    <main class="flex-grow flex flex-col items-center justify-center p-2 relative w-full">
+        
+        <div class="game-container relative rounded-xl overflow-hidden border-2 border-slate-800 shadow-[0_0_30px_rgba(168,85,247,0.2)]">
+            <canvas id="gameCanvas" class="block w-full h-full"></canvas>
+            <div class="scanlines"></div>
+            
+            <div id="uiOverlay" class="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-start md:justify-center pt-10 pb-8 z-20 transition-opacity duration-300 overflow-y-auto">
+                
+                <h1 id="uiTitle" class="text-4xl md:text-6xl font-['Orbitron'] font-black text-red-500 mb-2 drop-shadow-[0_0_15px_rgba(239,59,58,0.8)] text-center">ASTRO DASH</h1>
+                <p id="uiScore" class="text-xl md:text-2xl font-mono text-purple-400 mb-4 hidden text-center">Final Score: <span id="finalScoreVal" class="font-bold text-white">0</span></p>
+                
+                <p id="uiHelpText" class="text-xs font-mono text-slate-400 mb-6 text-center px-4 hidden md:block">Desktop: Use Left/Right Arrows to move. Spacebar to fire.<br>Mobile: Use on-screen buttons.</p>
+                
+                <div id="playerInputContainer" class="mb-6 w-full max-w-xs px-4 flex-shrink-0">
+                    <label for="playerName" class="block text-center text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">Enter Codename</label>
+                    <input type="text" id="playerName" placeholder="e.g. MAVERICK" maxlength="12" class="w-full bg-slate-900/80 border border-slate-700 text-white text-center font-['Orbitron'] font-bold py-3 rounded-xl focus:outline-none focus:border-red-500 transition-colors uppercase tracking-widest">
+                </div>
+
+                <button id="startBtn" class="bg-red-600 hover:bg-red-500 text-white font-['Orbitron'] font-bold uppercase tracking-widest px-8 py-4 rounded-xl shadow-[0_0_20px_rgba(239,59,58,0.5)] transition-all hover:scale-105 mb-8 flex-shrink-0">
+                    INITIATE SEQUENCE
+                </button>
+
+                <div id="leaderboardPanel" class="w-full max-w-xs bg-slate-900/90 border border-slate-700 rounded-xl p-4 shadow-xl mb-4 flex-shrink-0">
+                    <h3 class="text-center font-['Orbitron'] font-bold text-yellow-500 mb-3 text-sm tracking-widest border-b border-slate-700 pb-2"><i class="fas fa-trophy"></i> TOP 5 AGENTS</h3>
+                    <ul id="leaderboardList" class="font-mono text-xs text-slate-300 flex flex-col gap-2">
+                        </ul>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="w-full max-w-[800px] flex justify-between items-center mt-6 px-4 md:hidden gap-4 pb-6">
+            <div class="flex gap-4">
+                <button id="btnLeft" class="arcade-btn w-16 h-16 text-2xl"><i class="fas fa-caret-left"></i></button>
+                <button id="btnRight" class="arcade-btn w-16 h-16 text-2xl"><i class="fas fa-caret-right"></i></button>
+            </div>
+            <button id="btnFire" class="arcade-btn w-20 h-20 text-3xl border-red-500/50 text-red-500 bg-red-500/10 shadow-[0_0_15px_rgba(239,59,58,0.3)]"><i class="fas fa-crosshairs"></i></button>
+        </div>
+
+    </main>
+
+<script>
+// ==========================================
+// ANTI-CHEAT WRAPPER (IIFE)
+// This prevents console hackers from accessing game variables!
+// ==========================================
+(() => {
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const uiOverlay = document.getElementById('uiOverlay');
+    const uiTitle = document.getElementById('uiTitle');
+    const uiScore = document.getElementById('uiScore');
+    const finalScoreVal = document.getElementById('finalScoreVal');
+    const startBtn = document.getElementById('startBtn');
+    const playerNameInput = document.getElementById('playerName');
+    const leaderboardList = document.getElementById('leaderboardList');
+
+    // === MEMORY SYSTEM: Load saved name on page load ===
+    const savedCodename = localStorage.getItem('nrf26_astro_codename');
+    if (savedCodename) {
+        playerNameInput.value = savedCodename;
+    }
+    // ====================================================
+
+    canvas.width = 800;
+    canvas.height = 600;
+
+    const COLORS = {
+        player: '#3b82f6', 
+        bullet: '#00ffcc', 
+        enemy1: '#ef3b3a', 
+        enemy2: '#a855f7', 
+        enemy3: '#eab308', 
+        enemyBullet: '#ff0055',
+        text: '#ffffff'
+    };
+
+    let state = 'START'; 
+    let score = 0;
+    let level = 1;
+    let lives = 3;
+    let frameCount = 0;
+    let currentPlayerName = "UNKNOWN";
+
+    // ANTI-CHEAT: Track game duration
+    let gameStartTime = 0;
+
+    let player;
+    let bullets = [];
+    let enemies = [];
+    let enemyBullets = [];
+    let particles = [];
+    let stars = [];
+
+    const keys = { ArrowLeft: false, ArrowRight: false, Space: false };
+
+    window.addEventListener('keydown', e => {
+        if(state !== 'PLAYING') return; 
+        if(e.code === 'ArrowLeft') keys.ArrowLeft = true;
+        if(e.code === 'ArrowRight') keys.ArrowRight = true;
+        if(e.code === 'Space') {
+            keys.Space = true;
+            player.shoot();
+        }
+    });
+    window.addEventListener('keyup', e => {
+        if(e.code === 'ArrowLeft') keys.ArrowLeft = false;
+        if(e.code === 'ArrowRight') keys.ArrowRight = false;
+        if(e.code === 'Space') keys.Space = false;
+    });
+
+    const btnLeft = document.getElementById('btnLeft');
+    const btnRight = document.getElementById('btnRight');
+    const btnFire = document.getElementById('btnFire');
+
+    const handleTouch = (btn, key, isDown) => {
+        const action = (e) => { 
+            e.preventDefault(); 
+            if(state !== 'PLAYING') return;
+            keys[key] = isDown; 
+            if(isDown && key === 'Space') player.shoot(); 
+        };
+        btn.addEventListener('touchstart', action, {passive: false});
+        btn.addEventListener('mousedown', action);
+        
+        const release = (e) => { e.preventDefault(); keys[key] = !isDown; };
+        btn.addEventListener('touchend', release, {passive: false});
+        btn.addEventListener('mouseup', release);
+    };
+    handleTouch(btnLeft, 'ArrowLeft', true);
+    handleTouch(btnRight, 'ArrowRight', true);
+    handleTouch(btnFire, 'Space', true);
+
+    function initStars() {
+        stars = [];
+        for(let i=0; i<100; i++) {
+            stars.push({ x: Math.random()*canvas.width, y: Math.random()*canvas.height, speed: Math.random()*2+0.5, size: Math.random()*2 });
+        }
+    }
+    function drawStars() {
+        ctx.fillStyle = 'white';
+        stars.forEach(star => {
+            star.y += star.speed;
+            if(star.y > canvas.height) { star.y = 0; star.x = Math.random()*canvas.width; }
+            ctx.globalAlpha = star.speed / 3;
+            ctx.fillRect(star.x, star.y, star.size, star.size);
+        });
+        ctx.globalAlpha = 1.0;
+    }
+
+    class Player {
+        constructor() {
+            this.width = 40; this.height = 30;
+            this.x = canvas.width/2 - this.width/2;
+            this.y = canvas.height - 50;
+            this.speed = 6;
+            this.cooldown = 0;
+        }
+        update() {
+            if (keys.ArrowLeft && this.x > 10) this.x -= this.speed;
+            if (keys.ArrowRight && this.x < canvas.width - this.width - 10) this.x += this.speed;
+            
+            // Auto-fire when space is held down
+            if (keys.Space) this.shoot(); 
+            
+            if (this.cooldown > 0) this.cooldown--;
+        }
+        draw() {
+            ctx.fillStyle = COLORS.player;
+            ctx.shadowBlur = 15; ctx.shadowColor = COLORS.player;
+            
+            ctx.beginPath();
+            ctx.moveTo(this.x + this.width/2, this.y);
+            ctx.lineTo(this.x + this.width, this.y + this.height);
+            ctx.lineTo(this.x + this.width/2, this.y + this.height - 10);
+            ctx.lineTo(this.x, this.y + this.height);
+            ctx.closePath();
+            ctx.fill();
+            
+            if(keys.ArrowLeft || keys.ArrowRight) {
+                ctx.fillStyle = '#00ffff';
+                ctx.fillRect(this.x + this.width/2 - 4, this.y + this.height - 5, 8, Math.random()*15+5);
+            }
+            ctx.shadowBlur = 0;
+        }
+        shoot() {
+            if (this.cooldown === 0) {
+                bullets.push(new Bullet(this.x + this.width/2 - 2, this.y, -10, COLORS.bullet));
+                this.cooldown = 15;
+            }
+        }
+    }
+
+    class Bullet {
+        constructor(x, y, dy, color) {
+            this.x = x; this.y = y; this.width = 4; this.height = 15;
+            this.dy = dy; this.color = color; this.markedForDeletion = false;
+        }
+        update() {
+            this.y += this.dy;
+            if (this.y < 0 || this.y > canvas.height) this.markedForDeletion = true;
+        }
+        draw() {
+            ctx.fillStyle = this.color;
+            ctx.shadowBlur = 10; ctx.shadowColor = this.color;
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+            ctx.shadowBlur = 0;
+        }
+    }
+
+    class Enemy {
+        constructor(x, y, type) {
+            this.x = x; this.y = y; this.width = 30; this.height = 30;
+            this.type = type;
+            this.color = type === 1 ? COLORS.enemy1 : type === 2 ? COLORS.enemy2 : COLORS.enemy3;
+            this.markedForDeletion = false;
+            this.scoreValue = type * 10;
+        }
+        draw() {
+            ctx.fillStyle = this.color;
+            ctx.shadowBlur = 10; ctx.shadowColor = this.color;
+            
+            ctx.beginPath();
+            if(this.type === 1) {
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.fillStyle = '#000'; ctx.fillRect(this.x+5, this.y+10, 5,5); ctx.fillRect(this.x+20, this.y+10, 5,5); 
+            } else if (this.type === 2) {
+                ctx.moveTo(this.x+15, this.y); ctx.lineTo(this.x+30, this.y+15); ctx.lineTo(this.x+15, this.y+30); ctx.lineTo(this.x, this.y+15); ctx.fill();
+            } else {
+                ctx.fillRect(this.x+5, this.y, 20, 30);
+            }
+            ctx.shadowBlur = 0;
+        }
+    }
+
+    class Particle {
+        constructor(x, y, color) {
+            this.x = x; this.y = y;
+            this.size = Math.random() * 3 + 2;
+            this.speedX = Math.random() * 6 - 3;
+            this.speedY = Math.random() * 6 - 3;
+            this.color = color;
+            this.life = 1.0;
+        }
+        update() {
+            this.x += this.speedX; this.y += this.speedY;
+            this.life -= 0.05;
+        }
+        draw() {
+            ctx.globalAlpha = Math.max(0, this.life);
+            ctx.fillStyle = this.color;
+            ctx.fillRect(this.x, this.y, this.size, this.size);
+            ctx.globalAlpha = 1.0;
+        }
+    }
+
+    let enemyDirection = 1;
+    let enemySpeed = 1.5;
+
+    function spawnEnemies() {
+        enemies = [];
+        let rows = Math.min(3 + Math.floor(level/2), 6);
+        let cols = 8;
+        let startX = 100; let startY = 60;
+        enemySpeed = 1 + (level * 0.3);
+        
+        for (let r = 0; r < rows; r++) {
+            let type = r === 0 ? 3 : r < 2 ? 2 : 1; 
+            for (let c = 0; c < cols; c++) {
+                enemies.push(new Enemy(startX + c*60, startY + r*45, type));
+            }
+        }
+    }
+
+    function createExplosion(x, y, color) {
+        for(let i=0; i<15; i++) particles.push(new Particle(x, y, color));
+    }
+
+    function checkCollision(rect1, rect2) {
+        return (rect1.x < rect2.x + rect2.width && rect1.x + rect1.width > rect2.x &&
+                rect1.y < rect2.y + rect2.height && rect1.y + rect1.height > rect2.y);
+    }
+
+    function drawHUD() {
+        ctx.font = "20px 'Orbitron'";
+        ctx.fillStyle = COLORS.text;
+        ctx.textAlign = "left";
+        ctx.fillText(`SCORE: ${score.toString().padStart(5, '0')}`, 20, 35);
+        
+        ctx.textAlign = "center";
+        ctx.fillStyle = COLORS.enemy3;
+        ctx.fillText(`[ ${currentPlayerName} ]`, canvas.width/2, 35);
+
+        ctx.textAlign = "right";
+        ctx.fillStyle = COLORS.text;
+        ctx.fillText(`LEVEL: ${level}`, canvas.width - 20, 35);
+        
+        ctx.textAlign = "left";
+        ctx.fillText(`LIVES:`, 20, canvas.height - 20);
+        ctx.fillStyle = COLORS.player;
+        for(let i=0; i<lives; i++) {
+            ctx.beginPath();
+            let lx = 100 + (i*30);
+            let ly = canvas.height - 35;
+            ctx.moveTo(lx+10, ly); ctx.lineTo(lx+20, ly+20); ctx.lineTo(lx+10, ly+15); ctx.lineTo(lx, ly+20);
+            ctx.closePath(); ctx.fill();
+        }
+    }
+
+    function gameLoop() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawStars();
+
+        if (state === 'PLAYING') {
+            player.update();
+            player.draw();
+
+            bullets.forEach(b => { b.update(); b.draw(); });
+            bullets = bullets.filter(b => !b.markedForDeletion);
+
+            enemyBullets.forEach(b => { 
+                b.update(); b.draw(); 
+                if(checkCollision(b, player)) {
+                    b.markedForDeletion = true;
+                    createExplosion(player.x + player.width/2, player.y + player.height/2, COLORS.player);
+                    lives--;
+                    if(lives <= 0) gameOver();
+                }
+            });
+            enemyBullets = enemyBullets.filter(b => !b.markedForDeletion);
+
+            particles.forEach(p => { p.update(); p.draw(); });
+            particles = particles.filter(p => p.life > 0);
+
+            let edgeHit = false;
+            let lowestY = 0;
+            enemies.forEach(e => {
+                e.x += enemySpeed * enemyDirection;
+                if (e.x <= 20 || e.x + e.width >= canvas.width - 20) edgeHit = true;
+                if (e.y > lowestY) lowestY = e.y;
+            });
+
+            if (edgeHit) {
+                enemyDirection *= -1;
+                enemies.forEach(e => e.y += 20);
+            }
+
+            if (Math.random() < 0.02 + (level*0.005) && enemies.length > 0) {
+                let randomEnemy = enemies[Math.floor(Math.random() * enemies.length)];
+                enemyBullets.push(new Bullet(randomEnemy.x + 15, randomEnemy.y + 30, 6 + (level*0.5), COLORS.enemyBullet));
+            }
+
+            enemies.forEach(enemy => {
+                bullets.forEach(bullet => {
+                    if (checkCollision(bullet, enemy)) {
+                        bullet.markedForDeletion = true;
+                        enemy.markedForDeletion = true;
+                        score += enemy.scoreValue;
+                        createExplosion(enemy.x+15, enemy.y+15, enemy.color);
+                    }
+                });
+                enemy.draw();
+                if (enemy.y + enemy.height >= player.y) gameOver();
+            });
+
+            enemies = enemies.filter(e => !e.markedForDeletion);
+
+            if (enemies.length === 0) {
+                level++;
+                bullets = []; enemyBullets = [];
+                spawnEnemies();
+            }
+
+            drawHUD();
+        }
+
+        frameCount++;
+        requestAnimationFrame(gameLoop);
+    }
+
+    function startGame() {
+        const rawName = playerNameInput.value.trim().toUpperCase();
+        if(rawName === "") {
+            alert("Please enter a Codename to initiate sequence!");
+            playerNameInput.focus();
+            return;
+        }
+        currentPlayerName = rawName;
+
+        // === MEMORY SYSTEM: Save name when game starts ===
+        localStorage.setItem('nrf26_astro_codename', rawName);
+        // =================================================
+
+        // ANTI-CHEAT: Record start time
+        gameStartTime = Date.now();
+
+        uiOverlay.classList.add('opacity-0');
+        setTimeout(() => uiOverlay.classList.add('hidden'), 300);
+        score = 0; level = 1; lives = 3;
+        player = new Player();
+        bullets = []; enemyBullets = []; particles = [];
+        spawnEnemies();
+        state = 'PLAYING';
+    }
+
+    function gameOver() {
+        state = 'GAMEOVER';
+        
+        // ANTI-CHEAT: Time Validation
+        let playDurationSeconds = (Date.now() - gameStartTime) / 1000;
+        // Assume maximum realistic points per second is roughly 100
+        let maxTheoreticalScore = playDurationSeconds * 100; 
+
+        // If they exceed theoretical max and scored more than 500 points
+        if (score > maxTheoreticalScore && score > 500) {
+            console.warn("Anomaly detected in telemetry data. Score voided.");
+            score = 0; // Reset score to 0 if they cheated
+            currentPlayerName = "HACKER_CAUGHT";
+        }
+        
+        saveScore(currentPlayerName, score);
+        
+        uiTitle.innerText = "SYSTEM FAILURE";
+        uiTitle.classList.replace('text-red-500', 'text-slate-500');
+        uiScore.classList.remove('hidden');
+        finalScoreVal.innerText = score;
+        startBtn.innerText = "REBOOT SYSTEM";
+        
+        uiOverlay.classList.remove('hidden');
+        setTimeout(() => uiOverlay.classList.remove('opacity-0'), 10);
+    }
+
+    initStars();
+    startBtn.addEventListener('click', startGame);
+    
+    playerNameInput.addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') startGame();
+    });
+
+    gameLoop();
+
+    // ==========================================
+    // LEADERBOARD LOGIC (Firebase Realtime Database)
+    // ==========================================
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAVTjiuMpf6ZzLERj3Cf8vPdFfqDGSWm7s",
+      authDomain: "nrf26-arcade.firebaseapp.com",
+      databaseURL: "https://nrf26-arcade-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "nrf26-arcade",
+      storageBucket: "nrf26-arcade.firebasestorage.app",
+      messagingSenderId: "518006979497",
+      appId: "1:518006979497:web:001871fe1c85729f95e2b8"
+    };
+
+    if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
+    }
+    const db = firebase.database();
+
+    function saveScore(name, newScore) {
+        if (newScore === 0) return; // Prevent saving 0 scores from cheats or instant deaths
+
+        const safeName = name.replace(/[.#$\[\]]/g, '').trim().toUpperCase();
+        const playerRef = db.ref('leaderboard/' + safeName);
+        
+        playerRef.once('value').then((snapshot) => {
+            const data = snapshot.val();
+            if (!data || newScore > data.score) {
+                playerRef.set({
+                    name: safeName,
+                    score: newScore,
+                    timestamp: Date.now()
+                });
+            }
+        });
+    }
+
+    function initLeaderboardListener() {
+        leaderboardList.innerHTML = '<li class="text-center text-slate-500 py-2 animate-pulse">Connecting to Firebase...</li>';
+        
+        const topScoresRef = db.ref('leaderboard').orderByChild('score').limitToLast(5);
+        
+        topScoresRef.on('value', (snapshot) => {
+            let sortedEntries = [];
+            
+            snapshot.forEach((childSnapshot) => {
+                sortedEntries.push(childSnapshot.val());
+            });
+            
+            sortedEntries.reverse();
+
+            if (sortedEntries.length === 0) {
+                leaderboardList.innerHTML = '<li class="text-center text-slate-500 py-2">No records found. Be the first!</li>';
+                return;
+            }
+
+            leaderboardList.innerHTML = sortedEntries.map((entry, index) => {
+                let color = index === 0 ? 'text-yellow-400 font-bold drop-shadow-[0_0_5px_rgba(250,204,21,0.5)]' : (index === 1 ? 'text-slate-300' : 'text-amber-700');
+                if(index > 2) color = 'text-slate-500';
+                
+                return `
+                    <li class="flex justify-between items-center bg-slate-800/50 px-3 py-2 rounded border border-slate-700/50 transition-all">
+                        <span class="flex items-center gap-2">
+                            <span class="${color} w-4">${index + 1}.</span> 
+                            <span class="text-slate-200 uppercase tracking-wider">${entry.name}</span>
+                        </span>
+                        <span class="text-purple-400 font-bold tracking-widest">${entry.score.toString().padStart(5, '0')}</span>
+                    </li>
+                `;
+            }).join('');
+        }, (error) => {
+            leaderboardList.innerHTML = '<li class="text-center text-red-500 py-2 text-xs">Database Connection Failed.</li>';
+            console.error("Firebase Read Error:", error);
+        });
+    }
+
+    initLeaderboardListener();
+
+})(); // <-- END OF IIFE WRAPPER
+</script>
+</body>
+</html>
