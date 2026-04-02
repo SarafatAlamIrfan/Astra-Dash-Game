@@ -2,7 +2,7 @@
 
 A retro-styled, web-based arcade shoot-'em-up built with HTML5 Canvas and vanilla JavaScript. Defend against waves of enemies, compete for the high score, and secure your place on the global live leaderboard.
 
-[![Play Astro Dash](https://img.shields.io/badge/Play_Now-Live_Demo-success?style=for-the-badge)](https://SarafatAlamIrfan.github.io/astro-dash/)
+[![Play Astro Dash](https://img.shields.io/badge/Play_Now-Live_Demo-success?style=for-the-badge)](https://SarafatAlamIrfan.github.io/Astra-Dash-Game/)
 
 ## ✨ Features
 * **Classic Arcade Gameplay:** Progressively difficult waves of enemies and increasing enemy speeds.
